@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 
 export default function App() {
-  const senhaOrganizador = 'ceetim2026';
+  const senhaOrganizador = 'CEETIM@Inter2026#PF';
 
   const [abaAtual, setAbaAtual] = useState('jogos');
 
