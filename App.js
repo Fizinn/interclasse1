@@ -25,63 +25,68 @@ export default function App() {
   const [novoTempo, setNovoTempo] = useState('10');
   const [novaModalidade, setNovaModalidade] = useState('Futsal');
 
+  // Fase do jogo (só usado quando novaModalidade === 'Futsal')
+  const [novaFase, setNovaFase] = useState('grupos'); // 'grupos' | 'mata-mata'
+  const [novoGrupoNome, setNovoGrupoNome] = useState('');
+  const [novoRotuloMataMata, setNovoRotuloMataMata] = useState('');
+
   const [jogos, setJogos] = useState([]);
 
-
-useEffect(() => {
-  const unsubscribe = onSnapshot(
-    collection(db, 'jogos'),
-    (snapshot) => {
-     const lista = snapshot.docs.map((doc) => ({
-  ...doc.data(),
-  id: doc.id,
-}));
-
-      setJogos(lista);
-    }
-  );
-
-  return () => unsubscribe();
-}, []);
+  // Grupos do Futsal
+  const [gruposFutsal, setGruposFutsal] = useState([]);
+  const [novoNomeGrupo, setNovoNomeGrupo] = useState('');
+  const [timeInputPorGrupo, setTimeInputPorGrupo] = useState({});
 
   useEffect(() => {
-  const unsubscribe = onSnapshot(
-    collection(db, 'jogos'),
-    (snapshot) => {
-      const lista = snapshot.docs.map((doc) => ({
-        ...doc.data(),
-        id: doc.id,
-      }));
+    const unsubscribe = onSnapshot(
+      collection(db, 'jogos'),
+      (snapshot) => {
+        const lista = snapshot.docs.map((doc) => ({
+          ...doc.data(),
+          id: doc.id,
+        }));
 
-      setJogos(lista);
-    }
-  );
+        setJogos(lista);
+      }
+    );
 
-  return () => unsubscribe();
-}, []);
+    return () => unsubscribe();
+  }, []);
 
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      collection(db, 'gruposFutsal'),
+      (snapshot) => {
+        const lista = snapshot.docs.map((doc) => ({
+          ...doc.data(),
+          id: doc.id,
+        }));
 
-// COLA AQUI 👇
+        setGruposFutsal(lista);
+      }
+    );
 
-useEffect(() => {
+    return () => unsubscribe();
+  }, []);
 
-  const timer = setInterval(() => {
-    jogos.forEach(async (jogo) => {
-      if (jogo.modalidade === 'Vôlei') return;
-      if (jogo.status !== 'AO VIVO') return;
-      if (jogo.intervalo) return;
-      if (jogo.tempo <= 0) return;
+  useEffect(() => {
+    const timer = setInterval(() => {
+      jogos.forEach(async (jogo) => {
+        if (jogo.modalidade === 'Vôlei') return;
+        if (jogo.status !== 'AO VIVO') return;
+        if (jogo.intervalo) return;
+        if (jogo.tempo <= 0) return;
 
-      const jogoRef = doc(db, 'jogos', jogo.id);
+        const jogoRef = doc(db, 'jogos', jogo.id);
 
-      await updateDoc(jogoRef, {
-        tempo: jogo.tempo - 1,
+        await updateDoc(jogoRef, {
+          tempo: jogo.tempo - 1,
+        });
       });
-    });
-  }, 1000);
+    }, 1000);
 
-  return () => clearInterval(timer);
-}, [jogos]);
+    return () => clearInterval(timer);
+  }, [jogos]);
 
   function formatarTempo(segundos) {
     const min = Math.floor(segundos / 60);
@@ -105,6 +110,16 @@ useEffect(() => {
       return;
     }
 
+    if (
+      novaModalidade === 'Futsal' &&
+      novaFase === 'grupos' &&
+      gruposFutsal.length > 0 &&
+      !novoGrupoNome
+    ) {
+      Alert.alert('Selecione o grupo do jogo');
+      return;
+    }
+
     const minutos = Number(novoTempo);
 
     const novoJogo = {
@@ -123,111 +138,192 @@ useEffect(() => {
       periodo: 1,
       sets1: 0,
       sets2: 0,
+      fase: novaModalidade === 'Futsal' ? novaFase : null,
+      grupo:
+        novaModalidade === 'Futsal' && novaFase === 'grupos'
+          ? novoGrupoNome || null
+          : null,
+      faseMataMata:
+        novaModalidade === 'Futsal' && novaFase === 'mata-mata'
+          ? novoRotuloMataMata.trim() || 'Mata-mata'
+          : null,
     };
 
-    addDoc(collection(db, 'jogos'), novoJogo);              
+    addDoc(collection(db, 'jogos'), novoJogo);
 
     setNovoTime1('');
     setNovoTime2('');
     setNovoTempo('10');
+    setNovaFase('grupos');
+    setNovoGrupoNome('');
+    setNovoRotuloMataMata('');
   }
 
- 
   async function alterarPlacar(id, lado, valor) {
-  const jogo = jogos.find((j) => j.id === id);
-  if (!jogo) return;
+    const jogo = jogos.find((j) => j.id === id);
+    if (!jogo) return;
 
-  const jogoRef = doc(db, 'jogos', id);
+    const jogoRef = doc(db, 'jogos', id);
 
-  if (lado === 1) {
-    await updateDoc(jogoRef, {
-      placar1: Math.max(0, jogo.placar1 + valor),
-    });
-  } else {
-    await updateDoc(jogoRef, {
-      placar2: Math.max(0, jogo.placar2 + valor),
-    });
-  }
-}
-async function mudarStatus(id, status) {
-  console.log('Mudando status:', id, status);
-
-  const jogoRef = doc(db, 'jogos', id);
-
-  if (status === 'INTERVALO') {
-    await updateDoc(jogoRef, {
-      status: 'AO VIVO',
-      intervalo: true,
-    });
-    return;
+    if (lado === 1) {
+      await updateDoc(jogoRef, {
+        placar1: Math.max(0, jogo.placar1 + valor),
+      });
+    } else {
+      await updateDoc(jogoRef, {
+        placar2: Math.max(0, jogo.placar2 + valor),
+      });
+    }
   }
 
-  await updateDoc(jogoRef, {
-    status: status,
-    intervalo: false,
-  });
-}
+  async function mudarStatus(id, status) {
+    const jogoRef = doc(db, 'jogos', id);
+
+    if (status === 'INTERVALO') {
+      await updateDoc(jogoRef, {
+        status: 'AO VIVO',
+        intervalo: true,
+      });
+      return;
+    }
+
+    await updateDoc(jogoRef, {
+      status: status,
+      intervalo: false,
+    });
+  }
 
   async function adicionarAcrescimo(id, segundos) {
-  const jogo = jogos.find((j) => j.id === id);
-  if (!jogo) return;
+    const jogo = jogos.find((j) => j.id === id);
+    if (!jogo) return;
 
-  const jogoRef = doc(db, 'jogos', id);
+    const jogoRef = doc(db, 'jogos', id);
 
-  await updateDoc(jogoRef, {
-    acrescimo: jogo.acrescimo + segundos,
-    tempo: jogo.tempo + segundos,
-  });
-}
-
-  async function proximoPeriodo(id) {
-  const jogo = jogos.find((j) => j.id === id);
-  if (!jogo) return;
-
-  const jogoRef = doc(db, 'jogos', id);
-
-  await updateDoc(jogoRef, {
-    periodo: jogo.periodo + 1,
-    tempo: jogo.tempoOriginal,
-    status: 'PRÓXIMO',
-    intervalo: false,
-  });
-}
-
-  async function adicionarSet(id, lado) {
-  const jogo = jogos.find((j) => j.id === id);
-  if (!jogo) return;
-
-  const jogoRef = doc(db, 'jogos', id);
-
-  if (lado === 1) {
     await updateDoc(jogoRef, {
-      sets1: jogo.sets1 + 1,
-      placar1: 0,
-      placar2: 0,
-    });
-  } else {
-    await updateDoc(jogoRef, {
-      sets2: jogo.sets2 + 1,
-      placar1: 0,
-      placar2: 0,
+      acrescimo: jogo.acrescimo + segundos,
+      tempo: jogo.tempo + segundos,
     });
   }
-}
+
+  async function proximoPeriodo(id) {
+    const jogo = jogos.find((j) => j.id === id);
+    if (!jogo) return;
+
+    const jogoRef = doc(db, 'jogos', id);
+
+    await updateDoc(jogoRef, {
+      periodo: jogo.periodo + 1,
+      tempo: jogo.tempoOriginal,
+      status: 'PRÓXIMO',
+      intervalo: false,
+    });
+  }
+
+  async function adicionarSet(id, lado) {
+    const jogo = jogos.find((j) => j.id === id);
+    if (!jogo) return;
+
+    const jogoRef = doc(db, 'jogos', id);
+
+    if (lado === 1) {
+      await updateDoc(jogoRef, {
+        sets1: jogo.sets1 + 1,
+        placar1: 0,
+        placar2: 0,
+      });
+    } else {
+      await updateDoc(jogoRef, {
+        sets2: jogo.sets2 + 1,
+        placar1: 0,
+        placar2: 0,
+      });
+    }
+  }
 
   async function excluirJogo(id) {
-  const jogoRef = doc(db, 'jogos', id);
+    const jogoRef = doc(db, 'jogos', id);
 
-  await deleteDoc(jogoRef);
-}
-  function calcularClassificacaoPorModalidade(modalidade) {
+    await deleteDoc(jogoRef);
+  }
+
+  // ===== Grupos do Futsal =====
+
+  function criarGrupo() {
+    const nome = novoNomeGrupo.trim();
+
+    if (!nome) {
+      Alert.alert('Digite o nome do grupo');
+      return;
+    }
+
+    const jaExiste = gruposFutsal.some(
+      (g) => g.nome.toLowerCase() === nome.toLowerCase()
+    );
+
+    if (jaExiste) {
+      Alert.alert('Já existe um grupo com esse nome');
+      return;
+    }
+
+    addDoc(collection(db, 'gruposFutsal'), { nome, times: [] });
+    setNovoNomeGrupo('');
+  }
+
+  async function excluirGrupo(grupoId) {
+    const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    await deleteDoc(grupoRef);
+  }
+
+  async function adicionarTimeAoGrupo(grupoId) {
+    const grupo = gruposFutsal.find((g) => g.id === grupoId);
+    if (!grupo) return;
+
+    const nomeTime = (timeInputPorGrupo[grupoId] || '').trim();
+
+    if (!nomeTime) {
+      Alert.alert('Digite o nome do time');
+      return;
+    }
+
+    if (grupo.times.includes(nomeTime)) {
+      Alert.alert('Esse time já está no grupo');
+      return;
+    }
+
+    const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    await updateDoc(grupoRef, { times: [...grupo.times, nomeTime] });
+
+    setTimeInputPorGrupo((prev) => ({ ...prev, [grupoId]: '' }));
+  }
+
+  async function removerTimeDoGrupo(grupoId, nomeTime) {
+    const grupo = gruposFutsal.find((g) => g.id === grupoId);
+    if (!grupo) return;
+
+    const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    await updateDoc(grupoRef, {
+      times: grupo.times.filter((t) => t !== nomeTime),
+    });
+  }
+
+  // ===== Classificação =====
+
+  function calcularClassificacaoPorModalidade(modalidade, grupo = null) {
     const tabela = {};
 
     jogos
-      .filter(
-        (jogo) =>
-          jogo.status === 'FINALIZADO' && jogo.modalidade === modalidade
-      )
+      .filter((jogo) => {
+        if (jogo.status !== 'FINALIZADO') return false;
+        if (jogo.modalidade !== modalidade) return false;
+
+        if (modalidade === 'Futsal') {
+          // mata-mata nunca entra na tabela de pontos
+          if (jogo.fase !== 'grupos') return false;
+          if (grupo !== null && jogo.grupo !== grupo) return false;
+        }
+
+        return true;
+      })
       .forEach((jogo) => {
         const time1 = jogo.time1;
         const time2 = jogo.time2;
@@ -287,13 +383,19 @@ async function mudarStatus(id, status) {
     });
   }
 
-  function renderClassificacaoModalidade(modalidade, emoji) {
-    const tabela = calcularClassificacaoPorModalidade(modalidade);
+  function renderClassificacaoModalidade(
+    modalidade,
+    emoji,
+    grupo = null,
+    tituloExtra = ''
+  ) {
+    const tabela = calcularClassificacaoPorModalidade(modalidade, grupo);
 
     return (
       <View style={styles.classificacaoBox}>
         <Text style={styles.classificacaoTitulo}>
           {emoji} {modalidade}
+          {tituloExtra}
         </Text>
 
         <View style={styles.tabelaHeader}>
@@ -328,13 +430,29 @@ async function mudarStatus(id, status) {
   }
 
   function renderTelaClassificacao() {
+    const gruposOrdenados = gruposFutsal
+      .slice()
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+
     return (
       <FlatList
         data={[]}
         renderItem={null}
         ListHeaderComponent={
           <View>
-            {renderClassificacaoModalidade('Futsal', '⚽')}
+            {gruposOrdenados.length === 0
+              ? renderClassificacaoModalidade('Futsal', '⚽')
+              : gruposOrdenados.map((grupo) => (
+                  <View key={grupo.id}>
+                    {renderClassificacaoModalidade(
+                      'Futsal',
+                      '⚽',
+                      grupo.nome,
+                      ` - Grupo ${grupo.nome}`
+                    )}
+                  </View>
+                ))}
+
             {renderClassificacaoModalidade('Basquete', '🏀')}
             {renderClassificacaoModalidade('Vôlei', '🏐')}
           </View>
@@ -343,6 +461,123 @@ async function mudarStatus(id, status) {
       />
     );
   }
+
+  // ===== Aba Grupos =====
+
+  function renderTelaGrupos() {
+    const gruposOrdenados = gruposFutsal
+      .slice()
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+
+    return (
+      <FlatList
+        data={[]}
+        renderItem={null}
+        ListHeaderComponent={
+          <View>
+            {organizadorLogado ? (
+              <View style={styles.organizadorBox}>
+                <Text style={styles.loginTitulo}>Criar novo grupo</Text>
+
+                <View style={styles.loginLinha}>
+                  <TextInput
+                    style={styles.inputSenha}
+                    placeholder="Nome do grupo (ex: A)"
+                    placeholderTextColor="#999"
+                    value={novoNomeGrupo}
+                    onChangeText={setNovoNomeGrupo}
+                  />
+
+                  <TouchableOpacity
+                    style={styles.botaoEntrar}
+                    onPress={criarGrupo}
+                  >
+                    <Text style={styles.botaoEntrarTexto}>Criar</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.organizadorBox}>
+                <Text style={styles.semJogos}>
+                  Faça login como organizador na aba Jogos para criar e
+                  editar os grupos.
+                </Text>
+              </View>
+            )}
+
+            {gruposOrdenados.length === 0 ? (
+              <Text style={styles.semJogos}>Nenhum grupo criado ainda.</Text>
+            ) : (
+              gruposOrdenados.map((grupo) => (
+                <View key={grupo.id} style={styles.classificacaoBox}>
+                  <View style={styles.topoCard}>
+                    <Text style={styles.classificacaoTitulo}>
+                      Grupo {grupo.nome}
+                    </Text>
+
+                    {organizadorLogado && (
+                      <TouchableOpacity onPress={() => excluirGrupo(grupo.id)}>
+                        <Text style={styles.excluirTexto}>EXCLUIR</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {grupo.times.length === 0 ? (
+                    <Text style={styles.semJogos}>
+                      Nenhum time neste grupo ainda.
+                    </Text>
+                  ) : (
+                    grupo.times.map((time) => (
+                      <View key={time} style={styles.timeNoGrupoLinha}>
+                        <Text style={styles.tdTime}>{time}</Text>
+
+                        {organizadorLogado && (
+                          <TouchableOpacity
+                            onPress={() => removerTimeDoGrupo(grupo.id, time)}
+                          >
+                            <Text style={styles.removerTimeTexto}>
+                              remover
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    ))
+                  )}
+
+                  {organizadorLogado && (
+                    <View style={[styles.loginLinha, { marginTop: 10 }]}>
+                      <TextInput
+                        style={styles.inputSenha}
+                        placeholder="Nome do time"
+                        placeholderTextColor="#999"
+                        value={timeInputPorGrupo[grupo.id] || ''}
+                        onChangeText={(texto) =>
+                          setTimeInputPorGrupo((prev) => ({
+                            ...prev,
+                            [grupo.id]: texto,
+                          }))
+                        }
+                      />
+
+                      <TouchableOpacity
+                        style={styles.botaoEntrar}
+                        onPress={() => adicionarTimeAoGrupo(grupo.id)}
+                      >
+                        <Text style={styles.botaoEntrarTexto}>+ Time</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              ))
+            )}
+          </View>
+        }
+        contentContainerStyle={{ paddingBottom: 100 }}
+      />
+    );
+  }
+
+  // ===== Aba Jogos =====
 
   function renderCentro(item) {
     if (item.modalidade === 'Vôlei') {
@@ -378,6 +613,21 @@ async function mudarStatus(id, status) {
     );
   }
 
+  function renderFaseBadge(item) {
+    if (item.modalidade !== 'Futsal' || !item.fase) return null;
+
+    const texto =
+      item.fase === 'grupos'
+        ? `GRUPO ${item.grupo || '?'}`
+        : (item.faseMataMata || 'MATA-MATA').toUpperCase();
+
+    return (
+      <View style={styles.faseBadge}>
+        <Text style={styles.faseBadgeTexto}>{texto}</Text>
+      </View>
+    );
+  }
+
   function renderJogo({ item }) {
     return (
       <View style={styles.card}>
@@ -399,6 +649,8 @@ async function mudarStatus(id, status) {
             <Text style={styles.statusTexto}>{item.status}</Text>
           </View>
         </View>
+
+        {renderFaseBadge(item)}
 
         <View style={styles.placarArea}>
           <View style={styles.timeBox}>
@@ -607,6 +859,67 @@ async function mudarStatus(id, status) {
               ))}
             </View>
 
+            {novaModalidade === 'Futsal' && (
+              <View style={styles.faseSelecaoBox}>
+                <Text style={styles.faseSelecaoTitulo}>Fase</Text>
+
+                <View style={styles.modalidades}>
+                  {['grupos', 'mata-mata'].map((f) => (
+                    <TouchableOpacity
+                      key={f}
+                      style={[
+                        styles.modalidadeBtn,
+                        novaFase === f && styles.modalidadeBtnAtivo,
+                      ]}
+                      onPress={() => setNovaFase(f)}
+                    >
+                      <Text style={styles.modalidadeTexto}>
+                        {f === 'grupos' ? 'Fase de Grupos' : 'Mata-mata'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {novaFase === 'grupos' &&
+                  (gruposFutsal.length === 0 ? (
+                    <Text style={styles.semJogos}>
+                      Nenhum grupo criado. Crie um grupo na aba "Grupos".
+                    </Text>
+                  ) : (
+                    <View style={styles.gruposSelecaoLinha}>
+                      {gruposFutsal
+                        .slice()
+                        .sort((a, b) => a.nome.localeCompare(b.nome))
+                        .map((grupo) => (
+                          <TouchableOpacity
+                            key={grupo.id}
+                            style={[
+                              styles.grupoSelecaoBtn,
+                              novoGrupoNome === grupo.nome &&
+                                styles.modalidadeBtnAtivo,
+                            ]}
+                            onPress={() => setNovoGrupoNome(grupo.nome)}
+                          >
+                            <Text style={styles.modalidadeTexto}>
+                              Grupo {grupo.nome}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                    </View>
+                  ))}
+
+                {novaFase === 'mata-mata' && (
+                  <TextInput
+                    style={styles.input}
+                    placeholder='Rótulo (ex: Semifinal, Final)'
+                    placeholderTextColor="#999"
+                    value={novoRotuloMataMata}
+                    onChangeText={setNovoRotuloMataMata}
+                  />
+                )}
+              </View>
+            )}
+
             <TouchableOpacity style={styles.criarBtn} onPress={criarJogo}>
               <Text style={styles.criarTexto}>CRIAR JOGO</Text>
             </TouchableOpacity>
@@ -630,7 +943,11 @@ async function mudarStatus(id, status) {
       <Text style={styles.subtitulo}>Placar esportivo em tempo real</Text>
 
       <View style={styles.conteudo}>
-        {abaAtual === 'jogos' ? renderTelaJogos() : renderTelaClassificacao()}
+        {abaAtual === 'jogos'
+          ? renderTelaJogos()
+          : abaAtual === 'classificacao'
+          ? renderTelaClassificacao()
+          : renderTelaGrupos()}
       </View>
 
       <View style={styles.abas}>
@@ -662,6 +979,20 @@ async function mudarStatus(id, status) {
             ]}
           >
             Classificação
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.abaBotao, abaAtual === 'grupos' && styles.abaAtiva]}
+          onPress={() => setAbaAtual('grupos')}
+        >
+          <Text
+            style={[
+              styles.abaTexto,
+              abaAtual === 'grupos' && styles.abaTextoAtivo,
+            ]}
+          >
+            Grupos
           </Text>
         </TouchableOpacity>
       </View>
@@ -778,6 +1109,33 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
+  faseSelecaoBox: {
+    backgroundColor: '#0b1f14',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+
+  faseSelecaoTitulo: {
+    color: '#22c55e',
+    fontWeight: '800',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+
+  gruposSelecaoLinha: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+
+  grupoSelecaoBtn: {
+    backgroundColor: '#052e16',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+  },
+
   criarBtn: {
     backgroundColor: '#22c55e',
     padding: 14,
@@ -845,6 +1203,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
 
+  timeNoGrupoLinha: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#0b1f14',
+  },
+
+  removerTimeTexto: {
+    color: '#f87171',
+    fontWeight: '800',
+    fontSize: 11,
+  },
+
   card: {
     backgroundColor: '#071a0f',
     borderRadius: 20,
@@ -888,6 +1261,24 @@ const styles = StyleSheet.create({
 
   statusTexto: {
     color: '#fff',
+    fontWeight: '800',
+    fontSize: 11,
+  },
+
+  faseBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#0b1f14',
+    borderWidth: 1,
+    borderColor: '#22c55e',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginTop: -8,
+    marginBottom: 14,
+  },
+
+  faseBadgeTexto: {
+    color: '#22c55e',
     fontWeight: '800',
     fontSize: 11,
   },
@@ -973,6 +1364,7 @@ const styles = StyleSheet.create({
 
   botao: {
     flex: 1,
+    flexBasis: 0,
     backgroundColor: '#14532d',
     marginHorizontal: 4,
     padding: 12,
