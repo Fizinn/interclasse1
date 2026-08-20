@@ -18,6 +18,7 @@ export default function App() {
   const [abaAtual, setAbaAtual] = useState('jogos');
 
   const [organizadorLogado, setOrganizadorLogado] = useState(false);
+  const [painelAberto, setPainelAberto] = useState(true);
   const [senha, setSenha] = useState('');
 
   const [novoTime1, setNovoTime1] = useState('');
@@ -306,6 +307,76 @@ export default function App() {
     });
   }
 
+  // ===== Mata-mata automático (Futsal) =====
+
+  async function gerarMataMataAutomatico() {
+    const gruposOrdenados = gruposFutsal
+      .slice()
+      .sort((a, b) => a.nome.localeCompare(b.nome));
+
+    if (gruposOrdenados.length < 2) {
+      Alert.alert(
+        'Grupos insuficientes',
+        'Você precisa de pelo menos 2 grupos (ex: A e B) para gerar o mata-mata automático.'
+      );
+      return;
+    }
+
+    const grupoA = gruposOrdenados[0];
+    const grupoB = gruposOrdenados[1];
+
+    const classA = calcularClassificacaoPorModalidade('Futsal', grupoA.nome);
+    const classB = calcularClassificacaoPorModalidade('Futsal', grupoB.nome);
+
+    if (classA.length < 2 || classB.length < 2) {
+      Alert.alert(
+        'Classificação incompleta',
+        `Cada grupo precisa ter pelo menos 2 times com jogos finalizados. Grupo ${grupoA.nome} tem ${classA.length} e Grupo ${grupoB.nome} tem ${classB.length}.`
+      );
+      return;
+    }
+
+    const rotulo = novoRotuloMataMata.trim() || 'Semifinal';
+    const minutos = Number(novoTempo) || 10;
+
+    const confrontos = [
+      { time1: classA[0].time, time2: classB[1].time },
+      { time1: classB[0].time, time2: classA[1].time },
+    ];
+
+    for (const confronto of confrontos) {
+      const novoJogo = {
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 6),
+        modalidade: 'Futsal',
+        time1: confronto.time1,
+        time2: confronto.time2,
+        placar1: 0,
+        placar2: 0,
+        status: 'PRÓXIMO',
+        tempo: minutos * 60,
+        tempoOriginal: minutos * 60,
+        intervalo: false,
+        acrescimo: 0,
+        emAcrescimo: false,
+        periodo: 1,
+        sets1: 0,
+        sets2: 0,
+        fase: 'mata-mata',
+        grupo: null,
+        faseMataMata: rotulo,
+      };
+
+      await addDoc(collection(db, 'jogos'), novoJogo);
+    }
+
+    Alert.alert(
+      'Mata-mata gerado! 🏆',
+      `${rotulo}:\n\n1º ${grupoA.nome} (${confrontos[0].time1}) x 2º ${grupoB.nome} (${confrontos[0].time2})\n1º ${grupoB.nome} (${confrontos[1].time1}) x 2º ${grupoA.nome} (${confrontos[1].time2})\n\nOs jogos foram criados na aba "Jogos".`
+    );
+
+    setNovoRotuloMataMata('');
+  }
+
   // ===== Classificação =====
 
   function calcularClassificacaoPorModalidade(modalidade, grupo = null) {
@@ -412,7 +483,13 @@ export default function App() {
           <Text style={styles.semJogos}>Nenhum jogo finalizado ainda.</Text>
         ) : (
           tabela.map((item, index) => (
-            <View key={item.time} style={styles.tabelaLinha}>
+            <View
+              key={item.time}
+              style={[
+                styles.tabelaLinha,
+                grupo !== null && index < 2 && styles.linhaClassificado,
+              ]}
+            >
               <Text style={[styles.tdTime, { flex: 2 }]}>
                 {index + 1}º {item.time}
               </Text>
@@ -424,6 +501,12 @@ export default function App() {
               <Text style={styles.td}>{item.sg}</Text>
             </View>
           ))
+        )}
+
+        {grupo !== null && tabela.length > 0 && (
+          <Text style={styles.legendaClassificado}>
+            🟢 Classificado para o mata-mata
+          </Text>
         )}
       </View>
     );
@@ -502,6 +585,35 @@ export default function App() {
                   Faça login como organizador na aba Jogos para criar e
                   editar os grupos.
                 </Text>
+              </View>
+            )}
+
+            {organizadorLogado && gruposOrdenados.length >= 2 && (
+              <View style={styles.organizadorBox}>
+                <Text style={styles.loginTitulo}>Gerar Mata-Mata Automático</Text>
+
+                <Text style={[styles.semJogos, { marginBottom: 10 }]}>
+                  Cria as semifinais cruzando o 1º e 2º colocado dos dois
+                  primeiros grupos (ex: 1ºA x 2ºB e 1ºB x 2ºA), com base na
+                  classificação atual.
+                </Text>
+
+                <View style={styles.loginLinha}>
+                  <TextInput
+                    style={styles.inputSenha}
+                    placeholder='Rótulo (ex: Semifinal)'
+                    placeholderTextColor="#999"
+                    value={novoRotuloMataMata}
+                    onChangeText={setNovoRotuloMataMata}
+                  />
+
+                  <TouchableOpacity
+                    style={styles.botaoEntrar}
+                    onPress={gerarMataMataAutomatico}
+                  >
+                    <Text style={styles.botaoEntrarTexto}>Gerar</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             )}
 
@@ -815,9 +927,27 @@ export default function App() {
           </View>
         )}
 
-        {organizadorLogado && (
+        {organizadorLogado && !painelAberto && (
+          <TouchableOpacity
+            style={styles.painelToggleBtn}
+            onPress={() => setPainelAberto(true)}
+          >
+            <Text style={styles.painelToggleTexto}>☰</Text>
+          </TouchableOpacity>
+        )}
+
+        {organizadorLogado && painelAberto && (
           <View style={styles.organizadorBox}>
-            <Text style={styles.organizadorTitulo}>Painel do Organizador</Text>
+            <View style={styles.organizadorCabecalho}>
+              <Text style={styles.organizadorTitulo}>Painel do Organizador</Text>
+
+              <TouchableOpacity
+                style={styles.painelFecharBtn}
+                onPress={() => setPainelAberto(false)}
+              >
+                <Text style={styles.painelFecharTexto}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
             <TextInput
               style={styles.input}
@@ -1079,6 +1209,44 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  organizadorCabecalho: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  painelFecharBtn: {
+    backgroundColor: '#0b1f14',
+    borderRadius: 10,
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+
+  painelFecharTexto: {
+    color: '#22c55e',
+    fontWeight: '900',
+    fontSize: 16,
+  },
+
+  painelToggleBtn: {
+    backgroundColor: '#052e16',
+    borderRadius: 12,
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+
+  painelToggleTexto: {
+    color: '#22c55e',
+    fontWeight: '900',
+    fontSize: 20,
+  },
+
   input: {
     backgroundColor: '#0b1f14',
     color: '#fff',
@@ -1179,6 +1347,19 @@ const styles = StyleSheet.create({
   tabelaLinha: {
     flexDirection: 'row',
     paddingVertical: 5,
+  },
+
+  linhaClassificado: {
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+  },
+
+  legendaClassificado: {
+    color: '#22c55e',
+    fontWeight: '700',
+    fontSize: 11,
+    marginTop: 8,
   },
 
   th: {
