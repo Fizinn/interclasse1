@@ -1,4 +1,4 @@
-import { collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, updateDoc, doc, deleteDoc, increment } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
 import React, { useEffect, useState } from 'react';
@@ -80,7 +80,7 @@ export default function App() {
         const jogoRef = doc(db, 'jogos', jogo.id);
 
         await updateDoc(jogoRef, {
-          tempo: jogo.tempo - 1,
+          tempo: increment(-1),
         });
       });
     }, 1000);
@@ -93,6 +93,23 @@ export default function App() {
     const seg = segundos % 60;
 
     return `${String(min).padStart(2, '0')}:${String(seg).padStart(2, '0')}`;
+  }
+
+  // AO VIVO primeiro, depois PRÓXIMO, e FINALIZADO por último.
+  // Dentro de cada grupo mantém a ordem original (mais recentes por último).
+  function ordenarJogosPorStatus(lista) {
+    const ordem = { 'AO VIVO': 0, 'PRÓXIMO': 1, 'FINALIZADO': 2 };
+
+    return lista
+      .map((jogo, index) => ({ jogo, index }))
+      .sort((a, b) => {
+        const ordemA = ordem[a.jogo.status] ?? 1;
+        const ordemB = ordem[b.jogo.status] ?? 1;
+
+        if (ordemA !== ordemB) return ordemA - ordemB;
+        return a.index - b.index;
+      })
+      .map(({ jogo }) => jogo);
   }
 
   function loginOrganizador() {
@@ -203,13 +220,16 @@ export default function App() {
 
     const jogoRef = doc(db, 'jogos', id);
 
+    // Evita placar negativo sem precisar ler o valor mais recente do servidor.
     if (lado === 1) {
+      if (jogo.placar1 + valor < 0) return;
       await updateDoc(jogoRef, {
-        placar1: Math.max(0, jogo.placar1 + valor),
+        placar1: increment(valor),
       });
     } else {
+      if (jogo.placar2 + valor < 0) return;
       await updateDoc(jogoRef, {
-        placar2: Math.max(0, jogo.placar2 + valor),
+        placar2: increment(valor),
       });
     }
   }
@@ -232,14 +252,11 @@ export default function App() {
   }
 
   async function adicionarAcrescimo(id, segundos) {
-    const jogo = jogos.find((j) => j.id === id);
-    if (!jogo) return;
-
     const jogoRef = doc(db, 'jogos', id);
 
     await updateDoc(jogoRef, {
-      acrescimo: jogo.acrescimo + segundos,
-      tempo: jogo.tempo + segundos,
+      acrescimo: increment(segundos),
+      tempo: increment(segundos),
     });
   }
 
@@ -252,6 +269,7 @@ export default function App() {
     await updateDoc(jogoRef, {
       periodo: jogo.periodo + 1,
       tempo: jogo.tempoOriginal,
+      acrescimo: 0,
       status: 'PRÓXIMO',
       intervalo: false,
     });
@@ -1168,7 +1186,7 @@ export default function App() {
         )}
 
         <FlatList
-          data={jogos}
+          data={ordenarJogosPorStatus(jogos)}
           keyExtractor={(item) => item.id}
           renderItem={renderJogo}
           contentContainerStyle={{ paddingBottom: 100 }}
