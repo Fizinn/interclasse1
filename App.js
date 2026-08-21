@@ -18,7 +18,6 @@ export default function App() {
   const [abaAtual, setAbaAtual] = useState('jogos');
 
   const [organizadorLogado, setOrganizadorLogado] = useState(false);
-  const [painelAberto, setPainelAberto] = useState(true);
   const [senha, setSenha] = useState('');
 
   const [novoTime1, setNovoTime1] = useState('');
@@ -105,9 +104,47 @@ export default function App() {
     }
   }
 
+  // Retorna os nomes de times já conhecidos pra essa modalidade, sem duplicar
+  // (junta os times cadastrados nos grupos + times usados em jogos anteriores).
+  function obterNomesTimesConhecidos(modalidade) {
+    const vistos = new Map(); // chave normalizada -> nome original
+
+    function registrar(nome) {
+      const limpo = (nome || '').trim();
+      if (!limpo) return;
+      const chave = limpo.toLowerCase();
+      if (!vistos.has(chave)) {
+        vistos.set(chave, limpo);
+      }
+    }
+
+    if (modalidade === 'Futsal') {
+      gruposFutsal.forEach((grupo) => {
+        (grupo.times || []).forEach(registrar);
+      });
+    }
+
+    jogos
+      .filter((jogo) => jogo.modalidade === modalidade)
+      .forEach((jogo) => {
+        registrar(jogo.time1);
+        registrar(jogo.time2);
+      });
+
+    return Array.from(vistos.values()).sort((a, b) => a.localeCompare(b));
+  }
+
   function criarJogo() {
-    if (!novoTime1 || !novoTime2) {
+    const time1 = novoTime1.trim();
+    const time2 = novoTime2.trim();
+
+    if (!time1 || !time2) {
       Alert.alert('Preencha os times');
+      return;
+    }
+
+    if (time1.toLowerCase() === time2.toLowerCase()) {
+      Alert.alert('Os dois times não podem ser o mesmo');
       return;
     }
 
@@ -126,8 +163,8 @@ export default function App() {
     const novoJogo = {
       id: Date.now().toString(),
       modalidade: novaModalidade,
-      time1: novoTime1,
-      time2: novoTime2,
+      time1,
+      time2,
       placar1: 0,
       placar2: 0,
       status: 'PRÓXIMO',
@@ -927,43 +964,9 @@ export default function App() {
           </View>
         )}
 
-        {organizadorLogado && !painelAberto && (
-          <TouchableOpacity
-            style={styles.painelToggleBtn}
-            onPress={() => setPainelAberto(true)}
-          >
-            <Text style={styles.painelToggleTexto}>☰</Text>
-          </TouchableOpacity>
-        )}
-
-        {organizadorLogado && painelAberto && (
+        {organizadorLogado && (
           <View style={styles.organizadorBox}>
-            <View style={styles.organizadorCabecalho}>
-              <Text style={styles.organizadorTitulo}>Painel do Organizador</Text>
-
-              <TouchableOpacity
-                style={styles.painelFecharBtn}
-                onPress={() => setPainelAberto(false)}
-              >
-                <Text style={styles.painelFecharTexto}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Time 1"
-              placeholderTextColor="#999"
-              value={novoTime1}
-              onChangeText={setNovoTime1}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Time 2"
-              placeholderTextColor="#999"
-              value={novoTime2}
-              onChangeText={setNovoTime2}
-            />
+            <Text style={styles.organizadorTitulo}>Painel do Organizador</Text>
 
             <TextInput
               style={styles.input}
@@ -1049,6 +1052,114 @@ export default function App() {
                 )}
               </View>
             )}
+
+            {(() => {
+              const grupoSelecionado = gruposFutsal.find(
+                (g) => g.nome === novoGrupoNome
+              );
+
+              const usarSelecaoDoGrupo =
+                novaModalidade === 'Futsal' &&
+                novaFase === 'grupos' &&
+                grupoSelecionado &&
+                grupoSelecionado.times.length > 0;
+
+              if (usarSelecaoDoGrupo) {
+                return (
+                  <>
+                    <View style={styles.faseSelecaoBox}>
+                      <Text style={styles.faseSelecaoTitulo}>Time 1</Text>
+                      <View style={styles.gruposSelecaoLinha}>
+                        {grupoSelecionado.times
+                          .filter((t) => t !== novoTime2)
+                          .map((t) => (
+                            <TouchableOpacity
+                              key={t}
+                              style={[
+                                styles.grupoSelecaoBtn,
+                                novoTime1 === t && styles.modalidadeBtnAtivo,
+                              ]}
+                              onPress={() => setNovoTime1(t)}
+                            >
+                              <Text style={styles.modalidadeTexto}>{t}</Text>
+                            </TouchableOpacity>
+                          ))}
+                      </View>
+                    </View>
+
+                    <View style={styles.faseSelecaoBox}>
+                      <Text style={styles.faseSelecaoTitulo}>Time 2</Text>
+                      <View style={styles.gruposSelecaoLinha}>
+                        {grupoSelecionado.times
+                          .filter((t) => t !== novoTime1)
+                          .map((t) => (
+                            <TouchableOpacity
+                              key={t}
+                              style={[
+                                styles.grupoSelecaoBtn,
+                                novoTime2 === t && styles.modalidadeBtnAtivo,
+                              ]}
+                              onPress={() => setNovoTime2(t)}
+                            >
+                              <Text style={styles.modalidadeTexto}>{t}</Text>
+                            </TouchableOpacity>
+                          ))}
+                      </View>
+                    </View>
+                  </>
+                );
+              }
+
+              const nomesConhecidos = obterNomesTimesConhecidos(novaModalidade);
+
+              return (
+                <>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Time 1"
+                    placeholderTextColor="#999"
+                    value={novoTime1}
+                    onChangeText={setNovoTime1}
+                  />
+
+                  {nomesConhecidos.length > 0 && (
+                    <View style={styles.sugestoesLinha}>
+                      {nomesConhecidos.map((nome) => (
+                        <TouchableOpacity
+                          key={'t1-' + nome}
+                          style={styles.sugestaoChip}
+                          onPress={() => setNovoTime1(nome)}
+                        >
+                          <Text style={styles.sugestaoChipTexto}>{nome}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Time 2"
+                    placeholderTextColor="#999"
+                    value={novoTime2}
+                    onChangeText={setNovoTime2}
+                  />
+
+                  {nomesConhecidos.length > 0 && (
+                    <View style={styles.sugestoesLinha}>
+                      {nomesConhecidos.map((nome) => (
+                        <TouchableOpacity
+                          key={'t2-' + nome}
+                          style={styles.sugestaoChip}
+                          onPress={() => setNovoTime2(nome)}
+                        >
+                          <Text style={styles.sugestaoChipTexto}>{nome}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </>
+              );
+            })()}
 
             <TouchableOpacity style={styles.criarBtn} onPress={criarJogo}>
               <Text style={styles.criarTexto}>CRIAR JOGO</Text>
@@ -1209,44 +1320,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  organizadorCabecalho: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  painelFecharBtn: {
-    backgroundColor: '#0b1f14',
-    borderRadius: 10,
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-
-  painelFecharTexto: {
-    color: '#22c55e',
-    fontWeight: '900',
-    fontSize: 16,
-  },
-
-  painelToggleBtn: {
-    backgroundColor: '#052e16',
-    borderRadius: 12,
-    width: 48,
-    height: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 18,
-  },
-
-  painelToggleTexto: {
-    color: '#22c55e',
-    fontWeight: '900',
-    fontSize: 20,
-  },
-
   input: {
     backgroundColor: '#0b1f14',
     color: '#fff',
@@ -1289,6 +1362,27 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 13,
     marginBottom: 8,
+  },
+
+  sugestoesLinha: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 10,
+  },
+
+  sugestaoChip: {
+    backgroundColor: '#2a2a2a',
+    borderWidth: 1,
+    borderColor: '#444',
+    borderRadius: 14,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+
+  sugestaoChipTexto: {
+    color: '#ccc',
+    fontSize: 12,
   },
 
   gruposSelecaoLinha: {
