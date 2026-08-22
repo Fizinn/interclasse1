@@ -121,21 +121,16 @@ export default function App() {
     if (senha === senhaOrganizador) {
       setOrganizadorLogado(true);
       setSenha('');
-      setMostrarLoginOrganizador(false);
+      setMostrarLoginOrganizador(true); // já abre o painel direto após logar
     } else {
       Alert.alert('Senha incorreta');
     }
   }
 
-  function sairOrganizador() {
-    setOrganizadorLogado(false);
-    setSenha('');
+  // Só esconde o painel da tela (não desloga). Enquanto a aba não for
+  // recarregada, a senha continua válida e reabrir pelo ☰ não pede de novo.
+  function fecharPainelOrganizador() {
     setMostrarLoginOrganizador(false);
-
-    // A aba Grupos é exclusiva do organizador; volta pra Jogos ao sair.
-    if (abaAtual === 'grupos') {
-      setAbaAtual('jogos');
-    }
   }
 
   // Retorna os nomes de times já conhecidos pra essa modalidade, sem duplicar
@@ -1280,12 +1275,12 @@ export default function App() {
           </View>
         )}
 
-        {organizadorLogado && (
+        {organizadorLogado && mostrarLoginOrganizador && (
           <View style={styles.organizadorBox}>
             <View style={styles.topoCard}>
               <Text style={styles.organizadorTitulo}>Painel do Organizador</Text>
 
-              <TouchableOpacity onPress={sairOrganizador}>
+              <TouchableOpacity onPress={fecharPainelOrganizador}>
                 <Text style={styles.fecharPainelTexto}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -1507,17 +1502,15 @@ export default function App() {
           <Text style={styles.subtitulo}>Placar esportivo em tempo real</Text>
         </View>
 
-        {!organizadorLogado && (
-          <TouchableOpacity
-            style={styles.menuHamburguerBtn}
-            onPress={() => {
-              setAbaAtual('jogos');
-              setMostrarLoginOrganizador((v) => !v);
-            }}
-          >
-            <Text style={styles.menuHamburguerTexto}>☰</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.menuHamburguerBtn}
+          onPress={() => {
+            setAbaAtual('jogos');
+            setMostrarLoginOrganizador((v) => !v);
+          }}
+        >
+          <Text style={styles.menuHamburguerTexto}>☰</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.conteudo}>
