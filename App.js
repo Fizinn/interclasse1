@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
+  Modal,
 } from 'react-native';
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
 
   const [organizadorLogado, setOrganizadorLogado] = useState(false);
   const [senha, setSenha] = useState('');
+  const [mostrarLoginOrganizador, setMostrarLoginOrganizador] = useState(false);
 
   const [novoTime1, setNovoTime1] = useState('');
   const [novoTime2, setNovoTime2] = useState('');
@@ -36,6 +38,9 @@ export default function App() {
   const [gruposFutsal, setGruposFutsal] = useState([]);
   const [novoNomeGrupo, setNovoNomeGrupo] = useState('');
   const [timeInputPorGrupo, setTimeInputPorGrupo] = useState({});
+  const [jogadorInputPorTime, setJogadorInputPorTime] = useState({});
+
+  const [modalGolInfo, setModalGolInfo] = useState(null);
 
   useEffect(() => {
     const unsubscribe = onSnapshot(
@@ -116,8 +121,20 @@ export default function App() {
     if (senha === senhaOrganizador) {
       setOrganizadorLogado(true);
       setSenha('');
+      setMostrarLoginOrganizador(false);
     } else {
       Alert.alert('Senha incorreta');
+    }
+  }
+
+  function sairOrganizador() {
+    setOrganizadorLogado(false);
+    setSenha('');
+    setMostrarLoginOrganizador(false);
+
+    // A aba Grupos é exclusiva do organizador; volta pra Jogos ao sair.
+    if (abaAtual === 'grupos') {
+      setAbaAtual('jogos');
     }
   }
 
@@ -202,6 +219,7 @@ export default function App() {
         novaModalidade === 'Futsal' && novaFase === 'mata-mata'
           ? novoRotuloMataMata.trim() || 'Mata-mata'
           : null,
+      golsDetalhados: [],
     };
 
     addDoc(collection(db, 'jogos'), novoJogo);
@@ -321,7 +339,7 @@ export default function App() {
       return;
     }
 
-    addDoc(collection(db, 'gruposFutsal'), { nome, times: [] });
+    addDoc(collection(db, 'gruposFutsal'), { nome, times: [], jogadoresPorTime: {} });
     setNovoNomeGrupo('');
   }
 
@@ -357,9 +375,183 @@ export default function App() {
     if (!grupo) return;
 
     const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    const jogadoresPorTime = { ...(grupo.jogadoresPorTime || {}) };
+    delete jogadoresPorTime[nomeTime];
+
     await updateDoc(grupoRef, {
       times: grupo.times.filter((t) => t !== nomeTime),
+      jogadoresPorTime,
     });
+  }
+
+  // ===== Jogadores por time (Futsal) =====
+
+  function obterJogadoresDoTime(nomeTime) {
+    for (const grupo of gruposFutsal) {
+      const lista = (grupo.jogadoresPorTime || {})[nomeTime];
+      if (lista && lista.length > 0) return lista;
+    }
+    return [];
+  }
+
+  function encontrarGrupoDoTime(nomeTime) {
+    return gruposFutsal.find((g) => (g.times || []).includes(nomeTime));
+  }
+
+  async function adicionarJogador(grupoId, nomeTime, nomeJogadorBruto) {
+    const grupo = gruposFutsal.find((g) => g.id === grupoId);
+    if (!grupo) return;
+
+    const nomeJogador = (nomeJogadorBruto || '').trim();
+    if (!nomeJogador) {
+      Alert.alert('Digite o nome do jogador');
+      return;
+    }
+
+    const listaAtual = (grupo.jogadoresPorTime || {})[nomeTime] || [];
+
+    if (listaAtual.some((j) => j.toLowerCase() === nomeJogador.toLowerCase())) {
+      Alert.alert('Esse jogador já está cadastrado nesse time');
+      return;
+    }
+
+    const jogadoresPorTime = {
+      ...(grupo.jogadoresPorTime || {}),
+      [nomeTime]: [...listaAtual, nomeJogador],
+    };
+
+    const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    await updateDoc(grupoRef, { jogadoresPorTime });
+  }
+
+  async function removerJogador(grupoId, nomeTime, nomeJogador) {
+    const grupo = gruposFutsal.find((g) => g.id === grupoId);
+    if (!grupo) return;
+
+    const listaAtual = (grupo.jogadoresPorTime || {})[nomeTime] || [];
+
+    const jogadoresPorTime = {
+      ...(grupo.jogadoresPorTime || {}),
+      [nomeTime]: listaAtual.filter((j) => j !== nomeJogador),
+    };
+
+    const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    await updateDoc(grupoRef, { jogadoresPorTime });
+  }
+
+  // ===== Gols com artilheiro (Futsal) =====
+
+  function abrirSelecaoDeGol(jogoId, lado, nomeTime) {
+    const jogadores = obterJogadoresDoTime(nomeTime);
+
+    if (jogadores.length === 0) {
+      // Time sem elenco cadastrado: soma o gol normalmente, sem artilheiro.
+      registrarGol(jogoId, lado, nomeTime, null);
+      return;
+    }
+
+    setModalGolInfo({ jogoId, lado, nomeTime, jogadores });
+  }
+
+  async function registrarGol(jogoId, lado, nomeTime, nomeJogador) {
+    const jogo = jogos.find((j) => j.id === jogoId);
+    if (!jogo) return;
+
+    const jogoRef = doc(db, 'jogos', jogoId);
+    const golsAtuais = jogo.golsDetalhados || [];
+
+    await updateDoc(jogoRef, {
+      [lado === 1 ? 'placar1' : 'placar2']: increment(1),
+      golsDetalhados: [...golsAtuais, { time: nomeTime, jogador: nomeJogador }],
+    });
+
+    setModalGolInfo(null);
+  }
+
+  async function desfazerUltimoGol(jogoId, lado, nomeTime) {
+    const jogo = jogos.find((j) => j.id === jogoId);
+    if (!jogo) return;
+
+    const placarAtual = lado === 1 ? jogo.placar1 : jogo.placar2;
+    if (placarAtual <= 0) return;
+
+    const golsAtuais = jogo.golsDetalhados || [];
+    let idxRemover = -1;
+    for (let i = golsAtuais.length - 1; i >= 0; i--) {
+      if (golsAtuais[i].time === nomeTime) {
+        idxRemover = i;
+        break;
+      }
+    }
+
+    const novaLista =
+      idxRemover === -1
+        ? golsAtuais
+        : golsAtuais.filter((_, i) => i !== idxRemover);
+
+    const jogoRef = doc(db, 'jogos', jogoId);
+
+    await updateDoc(jogoRef, {
+      [lado === 1 ? 'placar1' : 'placar2']: increment(-1),
+      golsDetalhados: novaLista,
+    });
+  }
+
+  // ===== Artilheiros =====
+
+  function calcularArtilheiros() {
+    const contagem = new Map();
+
+    jogos.forEach((jogo) => {
+      (jogo.golsDetalhados || []).forEach((g) => {
+        if (!g.jogador) return;
+        const chave = g.jogador + '|' + g.time;
+        if (!contagem.has(chave)) {
+          contagem.set(chave, { jogador: g.jogador, time: g.time, gols: 0 });
+        }
+        contagem.get(chave).gols += 1;
+      });
+    });
+
+    return Array.from(contagem.values()).sort((a, b) => b.gols - a.gols);
+  }
+
+  function renderTelaArtilheiros() {
+    const artilheiros = calcularArtilheiros();
+
+    return (
+      <FlatList
+        data={[]}
+        renderItem={null}
+        ListHeaderComponent={
+          <View style={styles.classificacaoBox}>
+            <Text style={styles.classificacaoTitulo}>⚽ Artilheiros</Text>
+
+            {artilheiros.length === 0 ? (
+              <Text style={styles.semJogos}>
+                Nenhum gol com artilheiro registrado ainda.
+              </Text>
+            ) : (
+              artilheiros.map((item, index) => (
+                <View
+                  key={item.jogador + '|' + item.time}
+                  style={styles.tabelaLinha}
+                >
+                  <Text style={[styles.tdTime, { flex: 2 }]}>
+                    {index + 1}º {item.jogador}{' '}
+                    <Text style={{ color: '#888', fontSize: 12 }}>
+                      ({item.time})
+                    </Text>
+                  </Text>
+                  <Text style={styles.td}>{item.gols}</Text>
+                </View>
+              ))
+            )}
+          </View>
+        }
+        contentContainerStyle={{ paddingBottom: 100 }}
+      />
+    );
   }
 
   // ===== Mata-mata automático (Futsal) =====
@@ -419,6 +611,7 @@ export default function App() {
         fase: 'mata-mata',
         grupo: null,
         faseMataMata: rotulo,
+        golsDetalhados: [],
       };
 
       await addDoc(collection(db, 'jogos'), novoJogo);
@@ -694,21 +887,102 @@ export default function App() {
                       Nenhum time neste grupo ainda.
                     </Text>
                   ) : (
-                    grupo.times.map((time) => (
-                      <View key={time} style={styles.timeNoGrupoLinha}>
-                        <Text style={styles.tdTime}>{time}</Text>
+                    grupo.times.map((time) => {
+                      const jogadoresDoTime =
+                        (grupo.jogadoresPorTime || {})[time] || [];
 
-                        {organizadorLogado && (
-                          <TouchableOpacity
-                            onPress={() => removerTimeDoGrupo(grupo.id, time)}
-                          >
-                            <Text style={styles.removerTimeTexto}>
-                              remover
+                      return (
+                        <View key={time} style={styles.timeComJogadoresBox}>
+                          <View style={styles.timeNoGrupoLinha}>
+                            <Text style={styles.tdTime}>{time}</Text>
+
+                            {organizadorLogado && (
+                              <TouchableOpacity
+                                onPress={() =>
+                                  removerTimeDoGrupo(grupo.id, time)
+                                }
+                              >
+                                <Text style={styles.removerTimeTexto}>
+                                  remover time
+                                </Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+
+                          {jogadoresDoTime.length === 0 ? (
+                            <Text style={styles.semJogadoresTexto}>
+                              Nenhum jogador cadastrado.
                             </Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    ))
+                          ) : (
+                            <View style={styles.sugestoesLinha}>
+                              {jogadoresDoTime.map((jogador) => (
+                                <View
+                                  key={jogador}
+                                  style={styles.jogadorChip}
+                                >
+                                  <Text style={styles.jogadorChipTexto}>
+                                    {jogador}
+                                  </Text>
+
+                                  {organizadorLogado && (
+                                    <TouchableOpacity
+                                      onPress={() =>
+                                        removerJogador(
+                                          grupo.id,
+                                          time,
+                                          jogador
+                                        )
+                                      }
+                                    >
+                                      <Text style={styles.jogadorChipRemover}>
+                                        {' '}
+                                        ✕
+                                      </Text>
+                                    </TouchableOpacity>
+                                  )}
+                                </View>
+                              ))}
+                            </View>
+                          )}
+
+                          {organizadorLogado && (
+                            <View style={styles.loginLinha}>
+                              <TextInput
+                                style={styles.inputSenha}
+                                placeholder="Nome do jogador"
+                                placeholderTextColor="#999"
+                                value={jogadorInputPorTime[time] || ''}
+                                onChangeText={(texto) =>
+                                  setJogadorInputPorTime((prev) => ({
+                                    ...prev,
+                                    [time]: texto,
+                                  }))
+                                }
+                              />
+
+                              <TouchableOpacity
+                                style={styles.botaoEntrar}
+                                onPress={() => {
+                                  adicionarJogador(
+                                    grupo.id,
+                                    time,
+                                    jogadorInputPorTime[time]
+                                  );
+                                  setJogadorInputPorTime((prev) => ({
+                                    ...prev,
+                                    [time]: '',
+                                  }));
+                                }}
+                              >
+                                <Text style={styles.botaoEntrarTexto}>
+                                  + Jogador
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })
                   )}
 
                   {organizadorLogado && (
@@ -838,14 +1112,22 @@ export default function App() {
             <View style={styles.linhaPainel}>
               <TouchableOpacity
                 style={styles.botao}
-                onPress={() => alterarPlacar(item.id, 1, 1)}
+                onPress={() =>
+                  item.modalidade === 'Futsal'
+                    ? abrirSelecaoDeGol(item.id, 1, item.time1)
+                    : alterarPlacar(item.id, 1, 1)
+                }
               >
                 <Text style={styles.botaoTexto}>+ {item.time1}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.botao}
-                onPress={() => alterarPlacar(item.id, 2, 1)}
+                onPress={() =>
+                  item.modalidade === 'Futsal'
+                    ? abrirSelecaoDeGol(item.id, 2, item.time2)
+                    : alterarPlacar(item.id, 2, 1)
+                }
               >
                 <Text style={styles.botaoTexto}>+ {item.time2}</Text>
               </TouchableOpacity>
@@ -854,14 +1136,22 @@ export default function App() {
             <View style={styles.linhaPainel}>
               <TouchableOpacity
                 style={styles.botao}
-                onPress={() => alterarPlacar(item.id, 1, -1)}
+                onPress={() =>
+                  item.modalidade === 'Futsal'
+                    ? desfazerUltimoGol(item.id, 1, item.time1)
+                    : alterarPlacar(item.id, 1, -1)
+                }
               >
                 <Text style={styles.botaoTexto}>- {item.time1}</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={styles.botao}
-                onPress={() => alterarPlacar(item.id, 2, -1)}
+                onPress={() =>
+                  item.modalidade === 'Futsal'
+                    ? desfazerUltimoGol(item.id, 2, item.time2)
+                    : alterarPlacar(item.id, 2, -1)
+                }
               >
                 <Text style={styles.botaoTexto}>- {item.time2}</Text>
               </TouchableOpacity>
@@ -961,9 +1251,17 @@ export default function App() {
   function renderTelaJogos() {
     return (
       <>
-        {!organizadorLogado && (
+        {!organizadorLogado && mostrarLoginOrganizador && (
           <View style={styles.loginBox}>
-            <Text style={styles.loginTitulo}>Área do Organizador</Text>
+            <View style={styles.topoCard}>
+              <Text style={styles.loginTitulo}>Área do Organizador</Text>
+
+              <TouchableOpacity
+                onPress={() => setMostrarLoginOrganizador(false)}
+              >
+                <Text style={styles.fecharPainelTexto}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={styles.loginLinha}>
               <TextInput
@@ -984,7 +1282,13 @@ export default function App() {
 
         {organizadorLogado && (
           <View style={styles.organizadorBox}>
-            <Text style={styles.organizadorTitulo}>Painel do Organizador</Text>
+            <View style={styles.topoCard}>
+              <Text style={styles.organizadorTitulo}>Painel do Organizador</Text>
+
+              <TouchableOpacity onPress={sairOrganizador}>
+                <Text style={styles.fecharPainelTexto}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
             <TextInput
               style={styles.input}
@@ -1197,16 +1501,33 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.titulo}>🏆 INTERCLASSE CEETIM PAULO FREIRE</Text>
+      <View style={styles.cabecalhoLinha}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.titulo}>🏆 INTERCLASSE CEETIM PAULO FREIRE</Text>
+          <Text style={styles.subtitulo}>Placar esportivo em tempo real</Text>
+        </View>
 
-      <Text style={styles.subtitulo}>Placar esportivo em tempo real</Text>
+        {!organizadorLogado && (
+          <TouchableOpacity
+            style={styles.menuHamburguerBtn}
+            onPress={() => {
+              setAbaAtual('jogos');
+              setMostrarLoginOrganizador((v) => !v);
+            }}
+          >
+            <Text style={styles.menuHamburguerTexto}>☰</Text>
+          </TouchableOpacity>
+        )}
+      </View>
 
       <View style={styles.conteudo}>
         {abaAtual === 'jogos'
           ? renderTelaJogos()
           : abaAtual === 'classificacao'
           ? renderTelaClassificacao()
-          : renderTelaGrupos()}
+          : organizadorLogado
+          ? renderTelaGrupos()
+          : renderTelaArtilheiros()}
       </View>
 
       <View style={styles.abas}>
@@ -1251,10 +1572,65 @@ export default function App() {
               abaAtual === 'grupos' && styles.abaTextoAtivo,
             ]}
           >
-            Grupos
+            {organizadorLogado ? 'Grupos' : 'Artilheiros'}
           </Text>
         </TouchableOpacity>
       </View>
+
+      <Modal
+        visible={modalGolInfo !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setModalGolInfo(null)}
+      >
+        <View style={styles.modalFundo}>
+          <View style={styles.modalCaixa}>
+            <Text style={styles.loginTitulo}>
+              Quem marcou? ({modalGolInfo?.nomeTime})
+            </Text>
+
+            <View style={styles.sugestoesLinha}>
+              {(modalGolInfo?.jogadores || []).map((jogador) => (
+                <TouchableOpacity
+                  key={jogador}
+                  style={styles.sugestaoChip}
+                  onPress={() =>
+                    registrarGol(
+                      modalGolInfo.jogoId,
+                      modalGolInfo.lado,
+                      modalGolInfo.nomeTime,
+                      jogador
+                    )
+                  }
+                >
+                  <Text style={styles.sugestaoChipTexto}>{jogador}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity
+              style={[styles.botaoEntrar, { marginTop: 14 }]}
+              onPress={() =>
+                registrarGol(
+                  modalGolInfo.jogoId,
+                  modalGolInfo.lado,
+                  modalGolInfo.nomeTime,
+                  null
+                )
+              }
+            >
+              <Text style={styles.botaoEntrarTexto}>Não sei / sem artilheiro</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={{ marginTop: 12, alignSelf: 'center' }}
+              onPress={() => setModalGolInfo(null)}
+            >
+              <Text style={{ color: '#888' }}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1269,6 +1645,30 @@ const styles = StyleSheet.create({
 
   conteudo: {
     flex: 1,
+  },
+
+  cabecalhoLinha: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+
+  menuHamburguerBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginLeft: 8,
+  },
+
+  menuHamburguerTexto: {
+    color: '#22c55e',
+    fontSize: 26,
+    fontWeight: '900',
+  },
+
+  fecharPainelTexto: {
+    color: '#f87171',
+    fontSize: 18,
+    fontWeight: '900',
+    paddingHorizontal: 6,
   },
 
   titulo: {
@@ -1503,6 +1903,58 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderBottomWidth: 1,
     borderBottomColor: '#0b1f14',
+  },
+
+  timeComJogadoresBox: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#0b1f14',
+    paddingBottom: 10,
+    marginBottom: 10,
+  },
+
+  semJogadoresTexto: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 6,
+  },
+
+  jogadorChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#132a1c',
+    borderWidth: 1,
+    borderColor: '#1f4a30',
+    borderRadius: 14,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+
+  jogadorChipTexto: {
+    color: '#d1fae5',
+    fontSize: 12,
+  },
+
+  jogadorChipRemover: {
+    color: '#f87171',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+
+  modalFundo: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+
+  modalCaixa: {
+    backgroundColor: '#0b1f14',
+    borderRadius: 14,
+    padding: 20,
+    width: '100%',
+    maxWidth: 420,
   },
 
   removerTimeTexto: {
