@@ -10,10 +10,89 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
-  Modal,
 } from 'react-native';
 
+// Se qualquer parte da tela quebrar por um erro inesperado, isso evita que
+// vire uma tela branca: mostra uma mensagem e um botão pra tentar de novo,
+// em vez de derrubar o app inteiro.
+class ErroDeTela extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { temErro: false, erro: null };
+  }
+
+  static getDerivedStateFromError(erro) {
+    return { temErro: true, erro };
+  }
+
+  componentDidCatch(erro, info) {
+    console.error('Erro capturado na tela:', erro, info);
+  }
+
+  render() {
+    if (this.state.temErro) {
+      return (
+        <View style={estilosErro.container}>
+          <Text style={estilosErro.titulo}>Ops, algo deu errado na tela</Text>
+          <Text style={estilosErro.mensagem}>
+            {String(this.state.erro?.message || this.state.erro || '')}
+          </Text>
+          <TouchableOpacity
+            style={estilosErro.botao}
+            onPress={() => this.setState({ temErro: false, erro: null })}
+          >
+            <Text style={estilosErro.botaoTexto}>Tentar de novo</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+const estilosErro = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0b1f14',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  titulo: {
+    color: '#f87171',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  mensagem: {
+    color: '#aaa',
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  botao: {
+    backgroundColor: '#22c55e',
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    borderRadius: 10,
+  },
+  botaoTexto: {
+    color: '#000',
+    fontWeight: '800',
+  },
+});
+
 export default function App() {
+  return (
+    <ErroDeTela>
+      <AppConteudo />
+    </ErroDeTela>
+  );
+}
+
+function AppConteudo() {
   const senhaOrganizador = 'CEETIM@Inter2026#PF';
 
   const [abaAtual, setAbaAtual] = useState('jogos');
@@ -437,15 +516,27 @@ export default function App() {
   // ===== Gols com artilheiro (Futsal) =====
 
   function abrirSelecaoDeGol(jogoId, lado, nomeTime) {
+    const jogo = jogos.find((j) => j.id === jogoId);
+    const nomeTimeAdversario = jogo
+      ? lado === 1
+        ? jogo.time2
+        : jogo.time1
+      : null;
+
     const jogadores = obterJogadoresDoTime(nomeTime);
+    const jogadoresAdversario = nomeTimeAdversario
+      ? obterJogadoresDoTime(nomeTimeAdversario)
+      : [];
 
-    if (jogadores.length === 0) {
-      // Time sem elenco cadastrado: soma o gol normalmente, sem artilheiro.
-      registrarGol(jogoId, lado, nomeTime, null);
-      return;
-    }
-
-    setModalGolInfo({ jogoId, lado, nomeTime, jogadores });
+    setModalGolInfo({
+      jogoId,
+      lado,
+      nomeTime,
+      jogadores,
+      nomeTimeAdversario,
+      jogadoresAdversario,
+      modoContra: false,
+    });
   }
 
   async function registrarGol(jogoId, lado, nomeTime, nomeJogador) {
@@ -457,13 +548,47 @@ export default function App() {
 
     await updateDoc(jogoRef, {
       [lado === 1 ? 'placar1' : 'placar2']: increment(1),
-      golsDetalhados: [...golsAtuais, { time: nomeTime, jogador: nomeJogador }],
+      golsDetalhados: [
+        ...golsAtuais,
+        { time: nomeTime, jogador: nomeJogador, ladoBeneficiado: lado, contra: false },
+      ],
     });
 
     setModalGolInfo(null);
   }
 
-  async function desfazerUltimoGol(jogoId, lado, nomeTime) {
+  // Gol contra: o ponto vai pro placar do lado que estava sendo registrado
+  // (ex: apertou "+ Time1"), mas quem chutou foi um jogador do time
+  // adversário. Aparece "JOGADOR GC" embaixo do placar do time beneficiado.
+  async function registrarGolContraComJogador(
+    jogoId,
+    lado,
+    nomeTimeAdversario,
+    nomeJogadorAdversario
+  ) {
+    const jogo = jogos.find((j) => j.id === jogoId);
+    if (!jogo) return;
+
+    const jogoRef = doc(db, 'jogos', jogoId);
+    const golsAtuais = jogo.golsDetalhados || [];
+
+    await updateDoc(jogoRef, {
+      [lado === 1 ? 'placar1' : 'placar2']: increment(1),
+      golsDetalhados: [
+        ...golsAtuais,
+        {
+          time: nomeTimeAdversario,
+          jogador: nomeJogadorAdversario,
+          ladoBeneficiado: lado,
+          contra: true,
+        },
+      ],
+    });
+
+    setModalGolInfo(null);
+  }
+
+  async function desfazerUltimoGol(jogoId, lado) {
     const jogo = jogos.find((j) => j.id === jogoId);
     if (!jogo) return;
 
@@ -473,7 +598,8 @@ export default function App() {
     const golsAtuais = jogo.golsDetalhados || [];
     let idxRemover = -1;
     for (let i = golsAtuais.length - 1; i >= 0; i--) {
-      if (golsAtuais[i].time === nomeTime) {
+      const ladoDoGol = obterLadoDoGol(jogo, golsAtuais[i]);
+      if (ladoDoGol === lado) {
         idxRemover = i;
         break;
       }
@@ -492,14 +618,71 @@ export default function App() {
     });
   }
 
+  // Descobre de qual lado (1 ou 2) um gol registrado é. Usa ladoBeneficiado
+  // quando existe; para gols antigos (registrados antes dessa função existir)
+  // cai pra comparação pelo nome do time.
+  function obterLadoDoGol(jogo, gol) {
+    if (gol.ladoBeneficiado === 1 || gol.ladoBeneficiado === 2) {
+      return gol.ladoBeneficiado;
+    }
+    if (gol.time === jogo.time1) return 1;
+    if (gol.time === jogo.time2) return 2;
+    return null;
+  }
+
+  // Monta a listinha de marcadores pra aparecer embaixo do placar de um
+  // time: "JOGADOR" (1 gol), "JOGADOR 2X" (2+ gols), "JOGADOR GC" (gol contra).
+  function obterMarcadoresPorLado(jogo, lado) {
+    const golsDoLado = (jogo.golsDetalhados || []).filter(
+      (g) => g.jogador && obterLadoDoGol(jogo, g) === lado
+    );
+
+    const contagem = new Map();
+
+    golsDoLado.forEach((g) => {
+      const chave = g.jogador + '|' + (g.contra ? 'contra' : 'normal');
+      if (!contagem.has(chave)) {
+        contagem.set(chave, { jogador: g.jogador, contra: !!g.contra, qtd: 0 });
+      }
+      contagem.get(chave).qtd += 1;
+    });
+
+    return Array.from(contagem.values()).map((item) => {
+      if (item.contra) {
+        return item.qtd > 1
+          ? `${item.jogador}(GC) ${item.qtd}X`
+          : `${item.jogador}(GC)`;
+      }
+      return item.qtd > 1 ? `${item.jogador} ${item.qtd}X` : item.jogador;
+    });
+  }
+
+  function renderMarcadores(jogo, lado) {
+    const marcadores = obterMarcadoresPorLado(jogo, lado);
+
+    if (marcadores.length === 0) return null;
+
+    return (
+      <View style={styles.marcadoresBox}>
+        {marcadores.map((texto) => (
+          <Text key={texto} style={styles.marcadorTexto}>
+            {texto}
+          </Text>
+        ))}
+      </View>
+    );
+  }
+
   // ===== Artilheiros =====
 
-  function calcularArtilheiros() {
+  // Contagem "automática", direto dos gols registrados nos jogos.
+  function calcularArtilheirosAutomatico() {
     const contagem = new Map();
 
     jogos.forEach((jogo) => {
       (jogo.golsDetalhados || []).forEach((g) => {
         if (!g.jogador) return;
+        if (g.contra) return; // gol contra não conta pro artilheiro
         const chave = g.jogador + '|' + g.time;
         if (!contagem.has(chave)) {
           contagem.set(chave, { jogador: g.jogador, time: g.time, gols: 0 });
@@ -508,7 +691,102 @@ export default function App() {
       });
     });
 
-    return Array.from(contagem.values()).sort((a, b) => b.gols - a.gols);
+    return contagem;
+  }
+
+  // Se o organizador corrigiu manualmente o número de algum artilheiro
+  // (na aba Configuração), esse valor manual substitui o automático.
+  function obterAjusteArtilheiro(nomeTime, jogador) {
+    for (const grupo of gruposFutsal) {
+      const valor = (grupo.ajustesArtilheiros || {})[nomeTime]?.[jogador];
+      if (valor !== undefined) {
+        return { valor, grupoId: grupo.id };
+      }
+    }
+    return null;
+  }
+
+  function calcularArtilheiros() {
+    const contagem = calcularArtilheirosAutomatico();
+
+    // Aplica ajustes manuais (mesmo pra jogadores com 0 gols automáticos).
+    gruposFutsal.forEach((grupo) => {
+      Object.entries(grupo.ajustesArtilheiros || {}).forEach(
+        ([nomeTime, porJogador]) => {
+          Object.entries(porJogador).forEach(([jogador, valor]) => {
+            const chave = jogador + '|' + nomeTime;
+            contagem.set(chave, { jogador, time: nomeTime, gols: valor });
+          });
+        }
+      );
+    });
+
+    return Array.from(contagem.values())
+      .filter((item) => item.gols > 0)
+      .sort((a, b) => b.gols - a.gols);
+  }
+
+  // Lista todos os jogadores cadastrados (de todos os times/grupos), com a
+  // contagem atual (já considerando ajuste manual, se houver), pra tela de
+  // Configuração poder corrigir um a um.
+  function obterJogadoresParaAjuste() {
+    const contagemAutomatica = calcularArtilheirosAutomatico();
+    const lista = [];
+
+    gruposFutsal.forEach((grupo) => {
+      Object.entries(grupo.jogadoresPorTime || {}).forEach(
+        ([nomeTime, jogadores]) => {
+          jogadores.forEach((jogador) => {
+            const chave = jogador + '|' + nomeTime;
+            const automatico = contagemAutomatica.get(chave)?.gols || 0;
+            const ajuste = (grupo.ajustesArtilheiros || {})[nomeTime]?.[
+              jogador
+            ];
+            const atual = ajuste !== undefined ? ajuste : automatico;
+
+            lista.push({
+              grupoId: grupo.id,
+              nomeTime,
+              jogador,
+              atual,
+              temAjuste: ajuste !== undefined,
+            });
+          });
+        }
+      );
+    });
+
+    return lista.sort(
+      (a, b) => b.atual - a.atual || a.jogador.localeCompare(b.jogador)
+    );
+  }
+
+  async function ajustarGolsDoJogador(grupoId, nomeTime, jogador, novoValor) {
+    const grupo = gruposFutsal.find((g) => g.id === grupoId);
+    if (!grupo) return;
+
+    const valorFinal = Math.max(0, novoValor);
+
+    const ajustes = { ...(grupo.ajustesArtilheiros || {}) };
+    const porTime = { ...(ajustes[nomeTime] || {}) };
+    porTime[jogador] = valorFinal;
+    ajustes[nomeTime] = porTime;
+
+    const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    await updateDoc(grupoRef, { ajustesArtilheiros: ajustes });
+  }
+
+  async function removerAjusteDoJogador(grupoId, nomeTime, jogador) {
+    const grupo = gruposFutsal.find((g) => g.id === grupoId);
+    if (!grupo) return;
+
+    const ajustes = { ...(grupo.ajustesArtilheiros || {}) };
+    const porTime = { ...(ajustes[nomeTime] || {}) };
+    delete porTime[jogador];
+    ajustes[nomeTime] = porTime;
+
+    const grupoRef = doc(db, 'gruposFutsal', grupoId);
+    await updateDoc(grupoRef, { ajustesArtilheiros: ajustes });
   }
 
   function renderTelaArtilheiros() {
@@ -795,12 +1073,97 @@ export default function App() {
       .slice()
       .sort((a, b) => a.nome.localeCompare(b.nome));
 
+    const jogadoresParaAjuste = obterJogadoresParaAjuste();
+
     return (
       <FlatList
         data={[]}
         renderItem={null}
         ListHeaderComponent={
           <View>
+            {organizadorLogado && jogadoresParaAjuste.length > 0 && (
+              <View style={styles.organizadorBox}>
+                <Text style={styles.loginTitulo}>
+                  Corrigir número de gols dos artilheiros
+                </Text>
+
+                <Text style={[styles.semJogos, { marginBottom: 10 }]}>
+                  Se o número de gols de algum jogador estiver errado, ajusta
+                  aqui. O valor manual passa a valer no lugar da contagem
+                  automática.
+                </Text>
+
+                {jogadoresParaAjuste.map((item) => (
+                  <View
+                    key={item.grupoId + '|' + item.nomeTime + '|' + item.jogador}
+                    style={styles.ajusteLinha}
+                  >
+                    <Text style={styles.tdTime}>
+                      {item.jogador}{' '}
+                      <Text style={{ color: '#888', fontSize: 12 }}>
+                        ({item.nomeTime})
+                      </Text>
+                      {item.temAjuste && (
+                        <Text style={{ color: '#facc15', fontSize: 11 }}>
+                          {' '}
+                          [ajustado]
+                        </Text>
+                      )}
+                    </Text>
+
+                    <View style={styles.ajusteBotoes}>
+                      <TouchableOpacity
+                        style={styles.ajusteBotao}
+                        onPress={() =>
+                          ajustarGolsDoJogador(
+                            item.grupoId,
+                            item.nomeTime,
+                            item.jogador,
+                            item.atual - 1
+                          )
+                        }
+                      >
+                        <Text style={styles.ajusteBotaoTexto}>-</Text>
+                      </TouchableOpacity>
+
+                      <Text style={styles.ajusteValor}>{item.atual}</Text>
+
+                      <TouchableOpacity
+                        style={styles.ajusteBotao}
+                        onPress={() =>
+                          ajustarGolsDoJogador(
+                            item.grupoId,
+                            item.nomeTime,
+                            item.jogador,
+                            item.atual + 1
+                          )
+                        }
+                      >
+                        <Text style={styles.ajusteBotaoTexto}>+</Text>
+                      </TouchableOpacity>
+
+                      {item.temAjuste && (
+                        <TouchableOpacity
+                          onPress={() =>
+                            removerAjusteDoJogador(
+                              item.grupoId,
+                              item.nomeTime,
+                              item.jogador
+                            )
+                          }
+                        >
+                          <Text style={styles.removerTimeTexto}>
+                            {' '}
+                            voltar ao automático
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {organizadorLogado ? (
               <View style={styles.organizadorBox}>
                 <Text style={styles.loginTitulo}>Criar novo grupo</Text>
@@ -1092,6 +1455,7 @@ export default function App() {
           <View style={styles.timeBox}>
             <Text style={styles.nomeTime}>{item.time1}</Text>
             <Text style={styles.gol}>{item.placar1}</Text>
+            {renderMarcadores(item, 1)}
           </View>
 
           {renderCentro(item)}
@@ -1099,6 +1463,7 @@ export default function App() {
           <View style={styles.timeBox}>
             <Text style={styles.nomeTime}>{item.time2}</Text>
             <Text style={styles.gol}>{item.placar2}</Text>
+            {renderMarcadores(item, 2)}
           </View>
         </View>
 
@@ -1133,7 +1498,7 @@ export default function App() {
                 style={styles.botao}
                 onPress={() =>
                   item.modalidade === 'Futsal'
-                    ? desfazerUltimoGol(item.id, 1, item.time1)
+                    ? desfazerUltimoGol(item.id, 1)
                     : alterarPlacar(item.id, 1, -1)
                 }
               >
@@ -1144,7 +1509,7 @@ export default function App() {
                 style={styles.botao}
                 onPress={() =>
                   item.modalidade === 'Futsal'
-                    ? desfazerUltimoGol(item.id, 2, item.time2)
+                    ? desfazerUltimoGol(item.id, 2)
                     : alterarPlacar(item.id, 2, -1)
                 }
               >
@@ -1565,55 +1930,129 @@ export default function App() {
               abaAtual === 'grupos' && styles.abaTextoAtivo,
             ]}
           >
-            {organizadorLogado ? 'Grupos' : 'Artilheiros'}
+            {organizadorLogado ? 'Configuração' : 'Artilheiros'}
           </Text>
         </TouchableOpacity>
       </View>
 
-      <Modal
-        visible={modalGolInfo !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setModalGolInfo(null)}
-      >
+      {modalGolInfo !== null && (
         <View style={styles.modalFundo}>
           <View style={styles.modalCaixa}>
-            <Text style={styles.loginTitulo}>
-              Quem marcou? ({modalGolInfo?.nomeTime})
-            </Text>
+            {!modalGolInfo.modoContra ? (
+              <>
+                <Text style={styles.loginTitulo}>
+                  Quem marcou? ({modalGolInfo.nomeTime})
+                </Text>
 
-            <View style={styles.sugestoesLinha}>
-              {(modalGolInfo?.jogadores || []).map((jogador) => (
+                {modalGolInfo.jogadores.length > 0 && (
+                  <View style={styles.sugestoesLinha}>
+                    {modalGolInfo.jogadores.map((jogador) => (
+                      <TouchableOpacity
+                        key={jogador}
+                        style={styles.sugestaoChip}
+                        onPress={() =>
+                          registrarGol(
+                            modalGolInfo.jogoId,
+                            modalGolInfo.lado,
+                            modalGolInfo.nomeTime,
+                            jogador
+                          )
+                        }
+                      >
+                        <Text style={styles.sugestaoChipTexto}>{jogador}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
                 <TouchableOpacity
-                  key={jogador}
-                  style={styles.sugestaoChip}
+                  style={[styles.botaoEntrar, { marginTop: 14 }]}
                   onPress={() =>
                     registrarGol(
                       modalGolInfo.jogoId,
                       modalGolInfo.lado,
                       modalGolInfo.nomeTime,
-                      jogador
+                      null
                     )
                   }
                 >
-                  <Text style={styles.sugestaoChipTexto}>{jogador}</Text>
+                  <Text style={styles.botaoEntrarTexto}>Não sei / sem artilheiro</Text>
                 </TouchableOpacity>
-              ))}
-            </View>
 
-            <TouchableOpacity
-              style={[styles.botaoEntrar, { marginTop: 14 }]}
-              onPress={() =>
-                registrarGol(
-                  modalGolInfo.jogoId,
-                  modalGolInfo.lado,
-                  modalGolInfo.nomeTime,
-                  null
-                )
-              }
-            >
-              <Text style={styles.botaoEntrarTexto}>Não sei / sem artilheiro</Text>
-            </TouchableOpacity>
+                {modalGolInfo.nomeTimeAdversario && (
+                  <TouchableOpacity
+                    style={[styles.botaoEntrar, styles.botaoGolContra, { marginTop: 8 }]}
+                    onPress={() =>
+                      setModalGolInfo((prev) =>
+                        prev ? { ...prev, modoContra: true } : prev
+                      )
+                    }
+                  >
+                    <Text style={styles.botaoEntrarTexto}>
+                      ⚠️ Foi gol contra
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            ) : (
+              <>
+                <Text style={styles.loginTitulo}>
+                  Gol contra — quem chutou? ({modalGolInfo.nomeTimeAdversario})
+                </Text>
+
+                <Text style={[styles.semJogos, { marginBottom: 10 }]}>
+                  O ponto vai para {modalGolInfo.nomeTime}.
+                </Text>
+
+                {modalGolInfo.jogadoresAdversario.length > 0 && (
+                  <View style={styles.sugestoesLinha}>
+                    {modalGolInfo.jogadoresAdversario.map((jogador) => (
+                      <TouchableOpacity
+                        key={jogador}
+                        style={styles.sugestaoChip}
+                        onPress={() =>
+                          registrarGolContraComJogador(
+                            modalGolInfo.jogoId,
+                            modalGolInfo.lado,
+                            modalGolInfo.nomeTimeAdversario,
+                            jogador
+                          )
+                        }
+                      >
+                        <Text style={styles.sugestaoChipTexto}>{jogador}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.botaoEntrar, { marginTop: 14 }]}
+                  onPress={() =>
+                    registrarGolContraComJogador(
+                      modalGolInfo.jogoId,
+                      modalGolInfo.lado,
+                      modalGolInfo.nomeTimeAdversario,
+                      null
+                    )
+                  }
+                >
+                  <Text style={styles.botaoEntrarTexto}>
+                    Não sei / sem identificar
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{ marginTop: 10, alignSelf: 'center' }}
+                  onPress={() =>
+                    setModalGolInfo((prev) =>
+                      prev ? { ...prev, modoContra: false } : prev
+                    )
+                  }
+                >
+                  <Text style={{ color: '#888' }}>← Voltar</Text>
+                </TouchableOpacity>
+              </>
+            )}
 
             <TouchableOpacity
               style={{ marginTop: 12, alignSelf: 'center' }}
@@ -1623,7 +2062,7 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </View>
-      </Modal>
+      )}
     </View>
   );
 }
@@ -1710,6 +2149,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     justifyContent: 'center',
     borderRadius: 12,
+  },
+
+  botaoGolContra: {
+    backgroundColor: '#b45309',
   },
 
   botaoEntrarTexto: {
@@ -1898,6 +2341,46 @@ const styles = StyleSheet.create({
     borderBottomColor: '#0b1f14',
   },
 
+  ajusteLinha: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#0b1f14',
+  },
+
+  ajusteBotoes: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  ajusteBotao: {
+    backgroundColor: '#132a1c',
+    borderWidth: 1,
+    borderColor: '#1f4a30',
+    borderRadius: 6,
+    width: 28,
+    height: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  ajusteBotaoTexto: {
+    color: '#22c55e',
+    fontWeight: '900',
+    fontSize: 16,
+  },
+
+  ajusteValor: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
+    minWidth: 20,
+    textAlign: 'center',
+  },
+
   timeComJogadoresBox: {
     borderBottomWidth: 1,
     borderBottomColor: '#0b1f14',
@@ -1935,11 +2418,17 @@ const styles = StyleSheet.create({
   },
 
   modalFundo: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.7)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    zIndex: 999,
+    elevation: 999,
   },
 
   modalCaixa: {
@@ -2044,6 +2533,18 @@ const styles = StyleSheet.create({
     color: '#22c55e',
     fontSize: 42,
     fontWeight: '900',
+  },
+
+  marcadoresBox: {
+    marginTop: 6,
+    alignItems: 'center',
+  },
+
+  marcadorTexto: {
+    color: '#86efac',
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 
   centro: {
